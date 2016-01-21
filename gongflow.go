@@ -4,6 +4,7 @@ package gongflow
 
 import (
 	"errors"
+	"http"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -17,7 +18,7 @@ var (
 	// DefaultDirPermissions is the default permissions for directories created by gongflow
 	DefaultDirPermissions os.FileMode = 0777
 	// DefaultFilePermissions is the default permissions for directories created by gongflow
-	DefaultFilePermissions os.FileMode = 0777
+	DefaultFilePermissions os.FileMode = 0600
 	// ErrNoTempDir is returned when the temp directory doesn't exist
 	ErrNoTempDir = errors.New("gongflow: the temporary directory doesn't exist")
 	// ErrCantCreateDir is returned wwhen the temporary directory doesn't exist
@@ -115,21 +116,22 @@ func ChunkUpload(tempDir string, ngfd NgFlowData, r *http.Request) (string, erro
 func ChunkStatus(tempDir string, ngfd NgFlowData) (string, int) {
 	err := checkDirectory(tempDir)
 	if err != nil {
-		return "Directory is broken: " + err.Error(), 500
+		return "Directory is broken: " + err.Error(), http.StatusInternalServerError
 	}
 	_, chunkFile := buildPathChunks(tempDir, ngfd)
 	ChunkNumberString := strconv.Itoa(ngfd.ChunkNumber)
 	dat, err := ioutil.ReadFile(chunkFile)
 	if err != nil {
-		return "The chunk " + ngfd.Identifier + ":" + ChunkNumberString + " isn't started yet!", 404
+		// every thing except for 200, 201, 202, 404, 415. 500, 501
+		return "The chunk " + ngfd.Identifier + ":" + ChunkNumberString + " isn't started yet!", http.StatusNotAcceptable
 	}
 	// An exception for large last chunks, according to ng-flow the last chunk can be anywhere less
 	// than 2x the chunk size unless you haave forceChunkSize on... seems like idiocy to me, but alright.
 	if ngfd.ChunkNumber != ngfd.TotalChunks && ngfd.ChunkSize != len(dat) {
-		return "The chunk " + ngfd.Identifier + ":" + ChunkNumberString + " is the wrong size!", 500
+		return "The chunk " + ngfd.Identifier + ":" + ChunkNumberString + " is the wrong size!", http.StatusInternalServerError
 	}
 
-	return "The chunk " + ngfd.Identifier + ":" + ChunkNumberString + " looks great!", 200
+	return "The chunk " + ngfd.Identifier + ":" + ChunkNumberString + " looks great!", http.StatusOK
 }
 
 // ChunksCleanup is used to go through the tempDir and remove any chunks and directories older than
@@ -180,15 +182,17 @@ func combineChunks(fileDir string, ngfd NgFlowData) (string, error) {
 	}
 	for _, f := range files {
 		fl := path.Join(fileDir, f.Name())
-		dat, err := ioutil.ReadFile(fl)
-		if err != nil {
-			return "", err
-		}
-		_, err = cn.Write(dat)
-		if err != nil {
-			return "", err
-		}
-		if fl != combinedName { // we don't want to delete the file we just created
+		// make sure, we not copy the same file in the final file.
+		// the files array contain the full uploaded file name too.
+		if fl != combinedName {
+			dat, err := ioutil.ReadFile(fl)
+			if err != nil {
+				return "", err
+			}
+			_, err = cn.Write(dat)
+			if err != nil {
+				return "", err
+			}
 			err = os.Remove(fl)
 			if err != nil {
 				return "", err
