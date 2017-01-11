@@ -4,7 +4,6 @@ package gongflow
 
 import (
 	"errors"
-	"http"
 	"io/ioutil"
 	"log"
 	"net/http"
